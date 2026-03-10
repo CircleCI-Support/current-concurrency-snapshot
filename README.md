@@ -11,11 +11,6 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
   - **Queued** jobs (e.g. `pending`, `on_hold`, `blocked`)
 - Prints a summary: running count, queued count, and total concurrency in use
 
-**PLEASE NOTE:**
-
-1. **This will retrieve an estimate based on the in-flight jobs and is not meant to be a definitive. Some jobs may complete shortly after running the CLI so the data will not be accurate.**
-2. **We advise ONLY using this CLI when you believe concurrency Maximums are being hit. Exccessive usage can lead to abuse flagging on your org/project or rate limiting being imposedI**
-
 
 
 ## Setup
@@ -72,8 +67,10 @@ Current concurrency usage:
 
 With `--verbose` you also get a line per job (project, workflow name, job name, and number).
 
-## Notes
+## Important Notes
 
 - Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many of those slots are currently in use (running) or waiting (queued).
 - The script only looks at recent pipelines returned by the “list pipelines” API (up to 50 by default). If you have many projects, very old in-progress runs might not be included.
 - Your API token must have access to the organization you query.
+- **We advise ONLY using this CLI when you believe concurrency Maximums are being hit. Exccessive usage can lead to abuse flagging on your org/project or rate limiting being imposedI**
+-  **This will retrieve an estimate based on the in-flight jobs and is not meant to be a definitive. Some jobs may complete shortly after running the CLI so the data will not be accurate.**
