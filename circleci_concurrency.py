@@ -63,7 +63,7 @@ def list_jobs_for_workflow(token: str, workflow_id: str, page_token: Optional[st
         params["page-token"] = page_token
     return request(token, "GET", f"/workflow/{workflow_id}/job", params=params or None)
 
-
+# You can increase the maximum number of recent pipelines to check, but this will increase the number of API calls made. Which may lead to rate limits being hit.
 def collect_all_pipelines(token: str, org_slug: str, max_pipelines: int = 100) -> list[dict[str, Any]]:
     pipelines: list[dict[str, Any]] = []
     page_token: Optional[str] = None
@@ -102,7 +102,7 @@ def collect_jobs_for_workflow(token: str, workflow_id: str) -> list[dict[str, An
             break
     return jobs
 
-
+# You can increase the maximum number of recent pipelines to check, but this will increase the number of API calls made. Which may lead to rate limits being hit.
 def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
     """
     Compute current concurrency usage for the organization by scanning recent
