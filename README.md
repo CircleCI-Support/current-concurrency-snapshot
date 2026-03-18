@@ -2,6 +2,8 @@
 
 A small CLI that reports **current concurrency usage** for a CircleCI organization by counting running and queued jobs across recent pipelines.
 
+**Layout:** `circleci_concurrency.py` is the CLI entry point; `utils.py` holds API calls and concurrency logic.
+
 ## What it does
 
 - Calls the CircleCI API v2 to list pipelines for your org
@@ -21,6 +23,8 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
 
 2. **Install dependencies**
    ```bash
+   python3 -m venv venv
+   source venv/bin/activate 
    pip install -r requirements.txt
    ```
 
