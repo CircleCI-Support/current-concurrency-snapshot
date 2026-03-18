@@ -37,7 +37,7 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
 
 ```bash
 # Usage: pass your org slug (VCS/org-name)
-python circleci_concurrency.py gh/YourOrg
+python3 circleci_concurrency.py gh/YourOrg
 # Or for Bitbucket: bb/YourOrg
 # For GitLab / GitHub App use circleci as vcs and org ID: circleci/your-org-id
 ```
@@ -45,21 +45,21 @@ python circleci_concurrency.py gh/YourOrg
 **With environment variable:**
 ```bash
 export CIRCLE_ORG_SLUG=gh/YourOrg
-python circleci_concurrency.py
+python3 circleci_concurrency.py
 ```
 
 **Verbose (list each running/queued job):**
 ```bash
-python circleci_concurrency.py gh/YourOrg --verbose
+python3 circleci_concurrency.py gh/YourOrg --verbose
 # or
-python circleci_concurrency.py gh/YourOrg -v
+python3 circleci_concurrency.py gh/YourOrg -v
 ```
 
 **Runner concurrency (self-hosted):**
 ```bash
-python circleci_concurrency.py gh/YourOrg --runners
-python circleci_concurrency.py gh/YourOrg -r -v          # include per-job lines + resource_class
-python circleci_concurrency.py gh/YourOrg --runners-only # only Runner stats
+python3 circleci_concurrency.py gh/YourOrg --runners
+python3 circleci_concurrency.py gh/YourOrg -r -v          # include per-job lines + resource_class
+python3 circleci_concurrency.py gh/YourOrg --runners-only # only Runner stats
 ```
 
 **Alternative token env var:** `CIRCLE_CI_TOKEN` is also supported.
@@ -94,6 +94,6 @@ Self-hosted Runner concurrency:
 - Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many slots are in use (running) or waiting (queued).
 - The script only scans recent pipelines (up to 50 by default). Very old in-progress runs may be missing.
 - Your API token must have access to the organization you query.
-- Prefer running the CLI when investigating concurrency; heavy use may trigger rate limits.
+- Please only run the CLI when investigating concurrency; heavy or constant use may trigger rate limits.
 - **Runner mode** issues one job-details API call per running/queued job in active workflows—use sparingly.
-- Counts are a snapshot; jobs may finish immediately after you run the CLI.
+- Outputted counts are a snapshot; jobs may finish immediately after you run the CLI so the total is not always reliable
