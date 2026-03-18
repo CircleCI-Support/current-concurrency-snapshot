@@ -13,7 +13,7 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
   - **Queued** jobs (e.g. `pending`, `on_hold`, `blocked`)
 - Prints a summary: running count, queued count, and total concurrency in use
 
-
+**Self-hosted Runners:** With `--runners` / `-r`, the tool also calls the job-details API for each active job and reports concurrency only for jobs whose `resource_class` is a Runner (format `namespace/runner-name`, i.e. contains `/`). Use `--runners-only` to show only that section. `--verbose` lists each runner job with its `resource_class`.
 
 ## Setup
 
@@ -55,6 +55,13 @@ python circleci_concurrency.py gh/YourOrg --verbose
 python circleci_concurrency.py gh/YourOrg -v
 ```
 
+**Runner concurrency (self-hosted):**
+```bash
+python circleci_concurrency.py gh/YourOrg --runners
+python circleci_concurrency.py gh/YourOrg -r -v          # include per-job lines + resource_class
+python circleci_concurrency.py gh/YourOrg --runners-only # only Runner stats
+```
+
 **Alternative token env var:** `CIRCLE_CI_TOKEN` is also supported.
 
 ## Output example
@@ -71,10 +78,22 @@ Current concurrency usage:
 
 With `--verbose` you also get a line per job (project, workflow name, job name, and number).
 
-## **Important Notes**
+Runner mode adds a section like:
 
-- **Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many of those slots are currently in use (running) or waiting (queued).**
-- **The script only looks at recent pipelines returned by the “list pipelines” API (up to 50 by default). If you have many projects, very old in-progress runs might not be included.**
-- **Your API token must have access to the organization you query.**
-- **We advise ONLY using this CLI when you believe concurrency maximums are being hit. Excessive usage can lead to abuse flagging on your org/project or rate limiting being imposedI**
--  **This will retrieve an estimate based on the in-flight jobs and is not meant to be a definitive. Some jobs may complete shortly after running the CLI so the data will not be accurate.**
+```
+Self-hosted Runner concurrency:
+  Running on runners:  2
+  Queued for runners:  1
+  Total (runner jobs): 3
+  By resource_class:
+    my-org/docker-large: running=2, queued=1
+```
+
+## Important notes
+
+- Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many slots are in use (running) or waiting (queued).
+- The script only scans recent pipelines (up to 50 by default). Very old in-progress runs may be missing.
+- Your API token must have access to the organization you query.
+- Prefer running the CLI when investigating concurrency; heavy use may trigger rate limits.
+- **Runner mode** issues one job-details API call per running/queued job in active workflows—use sparingly.
+- Counts are a snapshot; jobs may finish immediately after you run the CLI.

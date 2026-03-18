@@ -5,6 +5,7 @@ CircleCI API helpers and concurrency aggregation logic.
 import os
 import sys
 from typing import Any, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -16,6 +17,9 @@ QUEUED_STATUSES = {"pending", "queued", "on_hold", "blocked"}
 
 # Workflow statuses we care about (in progress)
 ACTIVE_WORKFLOW_STATUSES = {"running", "on_hold", "created"}
+
+# Self-hosted runners use resource_class "namespace/runner-name" (contains "/").
+# Cloud resource classes use names like medium, arm.large, macos.m1.large.gen2 (no "/").
 
 
 def get_token() -> str:
@@ -59,6 +63,23 @@ def list_jobs_for_workflow(token: str, workflow_id: str, page_token: Optional[st
     if page_token:
         params["page-token"] = page_token
     return api_request(token, "GET", f"/workflow/{workflow_id}/job", params=params or None)
+
+
+def is_self_hosted_runner_resource_class(resource_class: str) -> bool:
+    """True if resource_class targets a self-hosted Runner (org/namespace format)."""
+    rc = (resource_class or "").strip()
+    return bool(rc) and "/" in rc
+
+
+def get_job_details(token: str, project_slug: str, job_number: Any) -> Optional[dict[str, Any]]:
+    """Fetch full job details (includes executor.resource_class). Returns None on failure."""
+    if job_number is None:
+        return None
+    enc = quote(project_slug, safe="")
+    try:
+        return api_request(token, "GET", f"/project/{enc}/job/{job_number}")
+    except requests.HTTPError:
+        return None
 
 
 def collect_all_pipelines(token: str, org_slug: str, max_pipelines: int = 100) -> list[dict[str, Any]]:
@@ -171,4 +192,81 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
         "running_count": running_count,
         "queued_count": queued_count,
         "total_concurrency_usage": total_usage,
+    }
+
+
+def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
+    """
+    Concurrency for jobs scheduled on self-hosted Runners only.
+    Uses job details API to read executor.resource_class (namespace/runner pattern).
+    """
+    pipelines = collect_all_pipelines(token, org_slug, max_pipelines=max_pipelines)
+    runner_running: list[dict[str, Any]] = []
+    runner_queued: list[dict[str, Any]] = []
+    by_rc: dict[str, dict[str, int]] = {}
+
+    def _bump(rc: str, field: str) -> None:
+        if rc not in by_rc:
+            by_rc[rc] = {"running": 0, "queued": 0}
+        by_rc[rc][field] += 1
+
+    for pipeline in pipelines:
+        pipeline_id = pipeline.get("id")
+        project_slug = pipeline.get("project_slug", "")
+        if not pipeline_id or not project_slug:
+            continue
+        try:
+            workflows = collect_workflows_for_pipeline(token, pipeline_id)
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                continue
+            raise
+        active = [w for w in workflows if (w.get("status") or "").lower() in ACTIVE_WORKFLOW_STATUSES]
+        for wf in active:
+            wf_id = wf.get("id")
+            wf_name = wf.get("name", "?")
+            if not wf_id:
+                continue
+            try:
+                jobs = collect_jobs_for_workflow(token, wf_id)
+            except requests.HTTPError:
+                continue
+            for job in jobs:
+                status = (job.get("status") or "").lower()
+                if status not in RUNNING_STATUSES and status not in QUEUED_STATUSES:
+                    continue
+                jn = job.get("job_number")
+                details = get_job_details(token, project_slug, jn)
+                if not details:
+                    continue
+                executor = details.get("executor") or {}
+                rc = (executor.get("resource_class") or "").strip()
+                if not is_self_hosted_runner_resource_class(rc):
+                    continue
+                base = {
+                    "job_id": job.get("id"),
+                    "job_number": jn,
+                    "name": job.get("name"),
+                    "project_slug": project_slug,
+                    "workflow_name": wf_name,
+                    "status": status,
+                    "resource_class": rc,
+                    "executor_type": executor.get("type"),
+                }
+                if status in RUNNING_STATUSES:
+                    runner_running.append(base)
+                    _bump(rc, "running")
+                else:
+                    runner_queued.append(base)
+                    _bump(rc, "queued")
+
+    return {
+        "org_slug": org_slug,
+        "pipelines_scanned": len(pipelines),
+        "runner_running_jobs": runner_running,
+        "runner_queued_jobs": runner_queued,
+        "runner_running_count": len(runner_running),
+        "runner_queued_count": len(runner_queued),
+        "runner_total_concurrency_usage": len(runner_running) + len(runner_queued),
+        "by_resource_class": by_rc,
     }
