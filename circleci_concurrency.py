@@ -13,6 +13,8 @@ import requests
 
 from utils import get_concurrency_usage, get_token
 
+BASE_URL = "https://circleci.com/api/v2"
+
 
 def _parse_org_slug() -> Optional[str]:
     """Resolve org slug from env or first non-flag argv."""
