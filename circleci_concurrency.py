@@ -13,7 +13,7 @@ import requests
 
 from utils import get_concurrency_usage, get_runner_concurrency_usage, get_token
 
-# How many recent org pipelines to scan (higher = more API calls, better coverage).
+# How many recent org pipelines to scan (higher = more API calls, better coverage, but can lead to rate limiting).
 MAX_PIPELINES_TO_SCAN = 50
 
 CLI_FLAGS = frozenset(
