@@ -13,6 +13,9 @@ import requests
 
 from utils import get_concurrency_usage, get_runner_concurrency_usage, get_token
 
+# How many recent org pipelines to scan (higher = more API calls, better coverage).
+MAX_PIPELINES_TO_SCAN = 50
+
 CLI_FLAGS = frozenset(
     {
         "--verbose",
@@ -71,10 +74,12 @@ def main() -> None:
 
     try:
         if not runners_only:
-            result = get_concurrency_usage(token, org_slug)
+            result = get_concurrency_usage(token, org_slug, max_pipelines=MAX_PIPELINES_TO_SCAN)
         runner_result = None
         if show_runners:
-            runner_result = get_runner_concurrency_usage(token, org_slug)
+            runner_result = get_runner_concurrency_usage(
+                token, org_slug, max_pipelines=MAX_PIPELINES_TO_SCAN
+            )
     except requests.HTTPError as e:
         print(f"CircleCI API error: {e}", file=sys.stderr)
         if e.response is not None:
