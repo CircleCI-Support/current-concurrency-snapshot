@@ -4,6 +4,8 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
 
 **Layout:** `circleci_concurrency.py` is the CLI entry point; `utils.py` holds API calls and concurrency logic.
 
+**Pipeline limit:** Edit `MAX_PIPELINES_TO_SCAN` at the top of `circleci_concurrency.py` to change how many recent pipelines are scanned (default `50`).
+
 ## What it does
 
 - Calls the CircleCI API v2 to list pipelines for your org
@@ -92,7 +94,7 @@ Self-hosted Runner concurrency:
 ## Important notes
 
 - Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many slots are in use (running) or waiting (queued).
-- The script only scans recent pipelines (up to 50 by default). Very old in-progress runs may be missing.
+- The script only scans recent pipelines (see `MAX_PIPELINES_TO_SCAN` in `circleci_concurrency.py`). Very old in-progress runs may be missing.
 - Your API token must have access to the organization you query.
 - Please only run the CLI when investigating concurrency; heavy or constant use may trigger rate limits.
 - **Runner mode** issues one job-details API call per running/queued job in active workflows—use sparingly.
