@@ -64,6 +64,20 @@ python3 circleci_concurrency.py gh/YourOrg -r -v          # include per-job line
 python3 circleci_concurrency.py gh/YourOrg --runners-only # only Runner stats
 ```
 
+**By project:**
+```bash
+# One repo only (full project slug: vcs/org/repo)
+python3 circleci_concurrency.py gh/YourOrg --project gh/YourOrg/my-service
+
+# Break down running/queued totals per project (from scanned pipelines)
+python3 circleci_concurrency.py gh/YourOrg --by-project
+
+# Combine with runners + verbose
+python3 circleci_concurrency.py gh/YourOrg --by-project -r -v
+```
+
+You can set `CIRCLE_PROJECT_SLUG` instead of `--project` when using `CIRCLE_ORG_SLUG`.
+
 **Alternative token env var:** `CIRCLE_CI_TOKEN` is also supported.
 
 ## Output example

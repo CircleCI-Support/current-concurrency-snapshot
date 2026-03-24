@@ -4,6 +4,7 @@ CircleCI API helpers and concurrency aggregation logic.
 
 import os
 import sys
+from collections import defaultdict
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -121,7 +122,38 @@ def collect_jobs_for_workflow(token: str, workflow_id: str) -> list[dict[str, An
     return jobs
 
 
-def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
+def _project_matches_filter(project_slug: str, project_filter: Optional[str]) -> bool:
+    if not project_filter:
+        return True
+    return project_slug.strip() == project_filter.strip()
+
+
+def _build_by_project_counts(
+    running_jobs: list[dict[str, Any]],
+    queued_jobs: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    by_p: dict[str, dict[str, int]] = defaultdict(lambda: {"running": 0, "queued": 0, "total": 0})
+    for j in running_jobs:
+        ps = j.get("project_slug") or ""
+        if not ps:
+            continue
+        by_p[ps]["running"] += 1
+        by_p[ps]["total"] += 1
+    for j in queued_jobs:
+        ps = j.get("project_slug") or ""
+        if not ps:
+            continue
+        by_p[ps]["queued"] += 1
+        by_p[ps]["total"] += 1
+    return dict(by_p)
+
+
+def get_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Compute current concurrency usage for the organization by scanning recent
     pipelines and counting running/queued jobs.
@@ -136,6 +168,8 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
         pipeline_id = pipeline.get("id")
         project_slug = pipeline.get("project_slug", "")
         if not pipeline_id:
+            continue
+        if not _project_matches_filter(project_slug, project_slug_filter):
             continue
         try:
             workflows = collect_workflows_for_pipeline(token, pipeline_id)
@@ -181,9 +215,11 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
     running_count = len(running_jobs)
     queued_count = len(queued_jobs)
     total_usage = running_count + queued_count
+    by_project = _build_by_project_counts(running_jobs, queued_jobs)
 
     return {
         "org_slug": org_slug,
+        "project_slug_filter": project_slug_filter,
         "pipelines_scanned": len(pipelines),
         "pipelines_with_active_workflows": pipelines_with_activity,
         "workflows_checked": workflows_checked,
@@ -192,10 +228,16 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
         "running_count": running_count,
         "queued_count": queued_count,
         "total_concurrency_usage": total_usage,
+        "by_project": by_project,
     }
 
 
-def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
+def get_runner_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Concurrency for jobs scheduled on self-hosted Runners only.
     Uses job details API to read executor.resource_class (namespace/runner pattern).
@@ -214,6 +256,8 @@ def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int =
         pipeline_id = pipeline.get("id")
         project_slug = pipeline.get("project_slug", "")
         if not pipeline_id or not project_slug:
+            continue
+        if not _project_matches_filter(project_slug, project_slug_filter):
             continue
         try:
             workflows = collect_workflows_for_pipeline(token, pipeline_id)
@@ -260,8 +304,11 @@ def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int =
                     runner_queued.append(base)
                     _bump(rc, "queued")
 
+    by_project = _build_by_project_counts(runner_running, runner_queued)
+
     return {
         "org_slug": org_slug,
+        "project_slug_filter": project_slug_filter,
         "pipelines_scanned": len(pipelines),
         "runner_running_jobs": runner_running,
         "runner_queued_jobs": runner_queued,
@@ -269,4 +316,5 @@ def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int =
         "runner_queued_count": len(runner_queued),
         "runner_total_concurrency_usage": len(runner_running) + len(runner_queued),
         "by_resource_class": by_rc,
+        "by_project": by_project,
     }
