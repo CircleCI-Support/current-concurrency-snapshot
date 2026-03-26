@@ -11,7 +11,11 @@ from typing import Optional
 
 import requests
 
-from utils import get_concurrency_usage, get_runner_concurrency_usage, get_token
+from utils import (
+    get_concurrency_usage,
+    get_executor_breakdown_concurrency_usage,
+    get_token,
+)
 
 # How many recent org pipelines to scan (higher = more API calls, better coverage, but can lead to rate limiting).
 MAX_PIPELINES_TO_SCAN = 50
@@ -24,6 +28,9 @@ CLI_FLAGS = frozenset(
         "--runners-only",
         "-r",
         "--by-project",
+        "--cloud",
+        "--cloud-only",
+        "-c",
     }
 )
 
@@ -93,6 +100,20 @@ def _print_runner_section(result: dict) -> None:
     print()
 
 
+def _print_cloud_section(result: dict) -> None:
+    print("Hosted concurrency (not self-hosted Runner):")
+    print(f"  Running (hosted):  {result['cloud_running_count']}")
+    print(f"  Queued (hosted):  {result['cloud_queued_count']}")
+    print(f"  Total (hosted jobs): {result['cloud_total_concurrency_usage']}")
+    if result.get("cloud_by_resource_class"):
+        print("  By resource_class:")
+        for rc, counts in sorted(result["cloud_by_resource_class"].items()):
+            r, q = counts["running"], counts["queued"]
+            if r or q:
+                print(f"    {rc}: running={r}, queued={q}")
+    print()
+
+
 def main() -> None:
     org_slug = _parse_org_slug()
     if not org_slug:
@@ -102,6 +123,8 @@ def main() -> None:
         print("  -v, --verbose       List each running/queued job", file=sys.stderr)
         print("  --runners, -r       Include concurrency for self-hosted Runner jobs", file=sys.stderr)
         print("  --runners-only      Only show Runner concurrency (skip org-wide totals)", file=sys.stderr)
+        print("  --cloud, -c         Include hosted (non-runner) concurrency from job details", file=sys.stderr)
+        print("  --cloud-only        Only show hosted concurrency (skip org-wide totals)", file=sys.stderr)
         print("  --project SLUG      Only include pipelines for this project (e.g. gh/Org/repo)", file=sys.stderr)
         print("  --by-project        List concurrency per project (from scanned pipelines)", file=sys.stderr)
         print("Or set CIRCLE_ORG_SLUG (and optionally CIRCLE_PROJECT_SLUG) environment variables.", file=sys.stderr)
@@ -110,24 +133,32 @@ def main() -> None:
     token = get_token()
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     show_runners = "--runners" in sys.argv or "-r" in sys.argv
+    show_cloud = "--cloud" in sys.argv or "-c" in sys.argv
     runners_only = "--runners-only" in sys.argv
+    cloud_only = "--cloud-only" in sys.argv
     by_project = "--by-project" in sys.argv
     project_filter = _parse_project_filter()
 
     if runners_only:
         show_runners = True
+    if cloud_only:
+        show_cloud = True
+
+    skip_main = runners_only or cloud_only
+    need_executor_breakdown = show_runners or show_cloud
 
     try:
-        if not runners_only:
+        result = None
+        if not skip_main:
             result = get_concurrency_usage(
                 token,
                 org_slug,
                 max_pipelines=MAX_PIPELINES_TO_SCAN,
                 project_slug_filter=project_filter,
             )
-        runner_result = None
-        if show_runners:
-            runner_result = get_runner_concurrency_usage(
+        breakdown = None
+        if need_executor_breakdown:
+            breakdown = get_executor_breakdown_concurrency_usage(
                 token,
                 org_slug,
                 max_pipelines=MAX_PIPELINES_TO_SCAN,
@@ -139,7 +170,7 @@ def main() -> None:
             print(f"Response: {e.response.text[:500]}", file=sys.stderr)
         sys.exit(1)
 
-    if not runners_only:
+    if not skip_main and result is not None:
         print(f"Organization: {result['org_slug']}")
         if project_filter:
             print(f"Project filter: {project_filter}")
@@ -163,33 +194,63 @@ def main() -> None:
                 for j in result["queued_jobs"]:
                     print(f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} [#{j.get('job_number', '?')}] ({j['status']})")
 
-    if show_runners and runner_result is not None:
-        if not runners_only:
+    if need_executor_breakdown and breakdown is not None:
+        if not skip_main:
             print()
-        print(f"Organization: {runner_result['org_slug']}")
+        print(f"Organization: {breakdown['org_slug']}")
         if project_filter:
             print(f"Project filter: {project_filter}")
-        _print_runner_section(runner_result)
-        if by_project:
-            _print_by_project_section(runner_result, title="Runner jobs by project")
-        if verbose and (
-            runner_result["runner_running_jobs"] or runner_result["runner_queued_jobs"]
-        ):
-            print("Runner jobs (running):")
-            for j in runner_result["runner_running_jobs"]:
-                rc = j.get("resource_class") or "?"
-                print(
-                    f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} "
-                    f"(#{j.get('job_number', '?')}) [{rc}]"
-                )
-            if runner_result["runner_queued_jobs"]:
-                print("Runner jobs (queued):")
-                for j in runner_result["runner_queued_jobs"]:
+
+        if show_runners:
+            _print_runner_section(breakdown)
+            if by_project:
+                _print_by_project_section(breakdown, title="Runner jobs by project")
+            if verbose and (
+                breakdown["runner_running_jobs"] or breakdown["runner_queued_jobs"]
+            ):
+                print("Runner jobs (running):")
+                for j in breakdown["runner_running_jobs"]:
                     rc = j.get("resource_class") or "?"
                     print(
                         f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} "
-                        f"[#{j.get('job_number', '?')}] ({j['status']}) [{rc}]"
+                        f"(#{j.get('job_number', '?')}) [{rc}]"
                     )
+                if breakdown["runner_queued_jobs"]:
+                    print("Runner jobs (queued):")
+                    for j in breakdown["runner_queued_jobs"]:
+                        rc = j.get("resource_class") or "?"
+                        print(
+                            f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} "
+                            f"[#{j.get('job_number', '?')}] ({j['status']}) [{rc}]"
+                        )
+
+        if show_cloud:
+            if show_runners:
+                print()
+            _print_cloud_section(breakdown)
+            if by_project:
+                _print_by_project_section(
+                    {"by_project": breakdown["cloud_by_project"]},
+                    title="Hosted jobs by project",
+                )
+            if verbose and (
+                breakdown["cloud_running_jobs"] or breakdown["cloud_queued_jobs"]
+            ):
+                print("Hosted jobs (running):")
+                for j in breakdown["cloud_running_jobs"]:
+                    rc = j.get("resource_class") or "(unset)"
+                    print(
+                        f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} "
+                        f"(#{j.get('job_number', '?')}) [{rc}]"
+                    )
+                if breakdown["cloud_queued_jobs"]:
+                    print("Hosted jobs (queued):")
+                    for j in breakdown["cloud_queued_jobs"]:
+                        rc = j.get("resource_class") or "(unset)"
+                        print(
+                            f"  - {j['project_slug']} | {j['workflow_name']} | {j['name']} "
+                            f"[#{j.get('job_number', '?')}] ({j['status']}) [{rc}]"
+                        )
 
 
 if __name__ == "__main__":
