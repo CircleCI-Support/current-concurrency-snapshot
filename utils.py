@@ -4,6 +4,7 @@ CircleCI API helpers and concurrency aggregation logic.
 
 import os
 import sys
+from collections import defaultdict
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -121,7 +122,38 @@ def collect_jobs_for_workflow(token: str, workflow_id: str) -> list[dict[str, An
     return jobs
 
 
-def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
+def _project_matches_filter(project_slug: str, project_filter: Optional[str]) -> bool:
+    if not project_filter:
+        return True
+    return project_slug.strip() == project_filter.strip()
+
+
+def _build_by_project_counts(
+    running_jobs: list[dict[str, Any]],
+    queued_jobs: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    by_p: dict[str, dict[str, int]] = defaultdict(lambda: {"running": 0, "queued": 0, "total": 0})
+    for j in running_jobs:
+        ps = j.get("project_slug") or ""
+        if not ps:
+            continue
+        by_p[ps]["running"] += 1
+        by_p[ps]["total"] += 1
+    for j in queued_jobs:
+        ps = j.get("project_slug") or ""
+        if not ps:
+            continue
+        by_p[ps]["queued"] += 1
+        by_p[ps]["total"] += 1
+    return dict(by_p)
+
+
+def get_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Compute current concurrency usage for the organization by scanning recent
     pipelines and counting running/queued jobs.
@@ -136,6 +168,8 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
         pipeline_id = pipeline.get("id")
         project_slug = pipeline.get("project_slug", "")
         if not pipeline_id:
+            continue
+        if not _project_matches_filter(project_slug, project_slug_filter):
             continue
         try:
             workflows = collect_workflows_for_pipeline(token, pipeline_id)
@@ -181,9 +215,11 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
     running_count = len(running_jobs)
     queued_count = len(queued_jobs)
     total_usage = running_count + queued_count
+    by_project = _build_by_project_counts(running_jobs, queued_jobs)
 
     return {
         "org_slug": org_slug,
+        "project_slug_filter": project_slug_filter,
         "pipelines_scanned": len(pipelines),
         "pipelines_with_active_workflows": pipelines_with_activity,
         "workflows_checked": workflows_checked,
@@ -192,28 +228,39 @@ def get_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) ->
         "running_count": running_count,
         "queued_count": queued_count,
         "total_concurrency_usage": total_usage,
+        "by_project": by_project,
     }
 
 
-def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int = 50) -> dict[str, Any]:
+def get_executor_breakdown_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
     """
-    Concurrency for jobs scheduled on self-hosted Runners only.
-    Uses job details API to read executor.resource_class (namespace/runner pattern).
+    Classify running/queued jobs into self-hosted Runner vs hosted (non-runner) using
+    job details (executor.resource_class). One job-details call per active job.
     """
     pipelines = collect_all_pipelines(token, org_slug, max_pipelines=max_pipelines)
     runner_running: list[dict[str, Any]] = []
     runner_queued: list[dict[str, Any]] = []
-    by_rc: dict[str, dict[str, int]] = {}
+    cloud_running: list[dict[str, Any]] = []
+    cloud_queued: list[dict[str, Any]] = []
+    by_rc_runner: dict[str, dict[str, int]] = {}
+    by_rc_cloud: dict[str, dict[str, int]] = {}
 
-    def _bump(rc: str, field: str) -> None:
-        if rc not in by_rc:
-            by_rc[rc] = {"running": 0, "queued": 0}
-        by_rc[rc][field] += 1
+    def _bump(store: dict[str, dict[str, int]], rc_key: str, field: str) -> None:
+        if rc_key not in store:
+            store[rc_key] = {"running": 0, "queued": 0}
+        store[rc_key][field] += 1
 
     for pipeline in pipelines:
         pipeline_id = pipeline.get("id")
         project_slug = pipeline.get("project_slug", "")
         if not pipeline_id or not project_slug:
+            continue
+        if not _project_matches_filter(project_slug, project_slug_filter):
             continue
         try:
             workflows = collect_workflows_for_pipeline(token, pipeline_id)
@@ -241,8 +288,8 @@ def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int =
                     continue
                 executor = details.get("executor") or {}
                 rc = (executor.get("resource_class") or "").strip()
-                if not is_self_hosted_runner_resource_class(rc):
-                    continue
+                is_runner = is_self_hosted_runner_resource_class(rc)
+                rc_bucket = rc if rc else "(unset)"
                 base = {
                     "job_id": job.get("id"),
                     "job_number": jn,
@@ -253,20 +300,88 @@ def get_runner_concurrency_usage(token: str, org_slug: str, max_pipelines: int =
                     "resource_class": rc,
                     "executor_type": executor.get("type"),
                 }
-                if status in RUNNING_STATUSES:
-                    runner_running.append(base)
-                    _bump(rc, "running")
+                if is_runner:
+                    if status in RUNNING_STATUSES:
+                        runner_running.append(base)
+                        _bump(by_rc_runner, rc, "running")
+                    else:
+                        runner_queued.append(base)
+                        _bump(by_rc_runner, rc, "queued")
                 else:
-                    runner_queued.append(base)
-                    _bump(rc, "queued")
+                    if status in RUNNING_STATUSES:
+                        cloud_running.append(base)
+                        _bump(by_rc_cloud, rc_bucket, "running")
+                    else:
+                        cloud_queued.append(base)
+                        _bump(by_rc_cloud, rc_bucket, "queued")
+
+    runner_by_project = _build_by_project_counts(runner_running, runner_queued)
+    cloud_by_project = _build_by_project_counts(cloud_running, cloud_queued)
 
     return {
         "org_slug": org_slug,
+        "project_slug_filter": project_slug_filter,
         "pipelines_scanned": len(pipelines),
         "runner_running_jobs": runner_running,
         "runner_queued_jobs": runner_queued,
         "runner_running_count": len(runner_running),
         "runner_queued_count": len(runner_queued),
         "runner_total_concurrency_usage": len(runner_running) + len(runner_queued),
-        "by_resource_class": by_rc,
+        "by_resource_class": by_rc_runner,
+        "by_project": runner_by_project,
+        "cloud_running_jobs": cloud_running,
+        "cloud_queued_jobs": cloud_queued,
+        "cloud_running_count": len(cloud_running),
+        "cloud_queued_count": len(cloud_queued),
+        "cloud_total_concurrency_usage": len(cloud_running) + len(cloud_queued),
+        "cloud_by_resource_class": by_rc_cloud,
+        "cloud_by_project": cloud_by_project,
+    }
+
+
+def get_runner_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
+    """Concurrency for self-hosted Runner jobs only (same data as breakdown, runner fields)."""
+    b = get_executor_breakdown_concurrency_usage(
+        token, org_slug, max_pipelines=max_pipelines, project_slug_filter=project_slug_filter
+    )
+    return {
+        "org_slug": b["org_slug"],
+        "project_slug_filter": b["project_slug_filter"],
+        "pipelines_scanned": b["pipelines_scanned"],
+        "runner_running_jobs": b["runner_running_jobs"],
+        "runner_queued_jobs": b["runner_queued_jobs"],
+        "runner_running_count": b["runner_running_count"],
+        "runner_queued_count": b["runner_queued_count"],
+        "runner_total_concurrency_usage": b["runner_total_concurrency_usage"],
+        "by_resource_class": b["by_resource_class"],
+        "by_project": b["by_project"],
+    }
+
+
+def get_cloud_concurrency_usage(
+    token: str,
+    org_slug: str,
+    max_pipelines: int = 50,
+    project_slug_filter: Optional[str] = None,
+) -> dict[str, Any]:
+    """Concurrency for hosted (non–self-hosted Runner) jobs from job details API."""
+    b = get_executor_breakdown_concurrency_usage(
+        token, org_slug, max_pipelines=max_pipelines, project_slug_filter=project_slug_filter
+    )
+    return {
+        "org_slug": b["org_slug"],
+        "project_slug_filter": b["project_slug_filter"],
+        "pipelines_scanned": b["pipelines_scanned"],
+        "cloud_running_jobs": b["cloud_running_jobs"],
+        "cloud_queued_jobs": b["cloud_queued_jobs"],
+        "cloud_running_count": b["cloud_running_count"],
+        "cloud_queued_count": b["cloud_queued_count"],
+        "cloud_total_concurrency_usage": b["cloud_total_concurrency_usage"],
+        "by_resource_class": b["cloud_by_resource_class"],
+        "by_project": b["cloud_by_project"],
     }
