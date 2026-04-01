@@ -8,6 +8,16 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
 
 **Pipeline limit:** Edit `MAX_PIPELINES_TO_SCAN` at the top of `circleci_concurrency.py` to change how many recent pipelines are scanned (default `50`).
 
+# ***Important notes***
+
+- This is not supported and maintained by CircleCI, so please use at your own discretion
+- Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many slots are in use (running) or waiting (queued).
+- The script only scans recent pipelines (see `MAX_PIPELINES_TO_SCAN` in `circleci_concurrency.py`). Very old in-progress runs may be missing.
+- Your API token must have access to the organization you query.
+- Please only run the CLI when investigating concurrency; heavy or constant use may trigger rate limits.
+- **Runner and hosted (`-r` / `-c`)** modes issue one job-details API call per running/queued job in active workflows—use sparingly. Using both flags together still uses a single pass over those jobs.
+- Outputted counts are a snapshot; jobs may finish immediately after you run the CLI so the total is not always reliable
+
 ## What it does
 
 - Calls the CircleCI API v2 to list pipelines for your org
@@ -130,12 +140,3 @@ Hosted concurrency (not self-hosted Runner):
     medium: running=3, queued=0
     arm.large: running=1, queued=1
 ```
-
-## Important notes
-
-- Concurrency in CircleCI is the number of jobs that can run at once (e.g. 30 on the free plan). This tool reports how many slots are in use (running) or waiting (queued).
-- The script only scans recent pipelines (see `MAX_PIPELINES_TO_SCAN` in `circleci_concurrency.py`). Very old in-progress runs may be missing.
-- Your API token must have access to the organization you query.
-- Please only run the CLI when investigating concurrency; heavy or constant use may trigger rate limits.
-- **Runner and hosted (`-r` / `-c`)** modes issue one job-details API call per running/queued job in active workflows—use sparingly. Using both flags together still uses a single pass over those jobs.
-- Outputted counts are a snapshot; jobs may finish immediately after you run the CLI so the total is not always reliable
