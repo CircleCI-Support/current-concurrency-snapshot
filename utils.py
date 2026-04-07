@@ -12,12 +12,13 @@ import requests
 
 BASE_URL = "https://circleci.com/api/v2"
 
-# Job statuses that consume or reserve concurrency
+# Job statuses that consume or reserve concurrency.
+# "on_hold" (e.g. approval) does not count toward CircleCI concurrency limits.
 RUNNING_STATUSES = {"running"}
-QUEUED_STATUSES = {"pending", "queued", "on_hold", "blocked"}
+QUEUED_STATUSES = {"pending", "queued", "blocked"}
 
-# Workflow statuses we care about (in progress)
-ACTIVE_WORKFLOW_STATUSES = {"running", "on_hold", "created"}
+# Workflows we traverse for active jobs. Exclude "on_hold" (manual approval / paused).
+ACTIVE_WORKFLOW_STATUSES = {"running", "created"}
 
 # Self-hosted runners use resource_class "namespace/runner-name" (contains "/").
 # Cloud resource classes use names like medium, arm.large, macos.m1.large.gen2 (no "/").

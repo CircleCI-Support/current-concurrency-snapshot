@@ -21,10 +21,10 @@ A small CLI that reports **current concurrency usage** for a CircleCI organizati
 ## What it does
 
 - Calls the CircleCI API v2 to list pipelines for your org
-- For each pipeline, fetches workflows and keeps only those that are in progress (`running`, `on_hold`, `created`)
-- For each in-progress workflow, fetches jobs and counts:
+- For each pipeline, fetches workflows that look active (`running`, `created`) — **not** `on_hold` (approval gates do not use concurrency slots)
+- For each such workflow, fetches jobs and counts:
   - **Running** jobs (actively using concurrency)
-  - **Queued** jobs (e.g. `pending`, `on_hold`, `blocked`)
+  - **Queued** jobs (e.g. `pending`, `queued`, `blocked`) — **`on_hold` jobs are excluded** (they do not count toward concurrency limits)
 - Prints a summary: running count, queued count, and total concurrency in use
 
 **Self-hosted Runners:** With `--runners` / `-r`, the tool calls the job-details API for each active job and reports jobs whose `resource_class` is a Runner (`namespace/runner-name`, contains `/`). Use `--runners-only` for only that section.
